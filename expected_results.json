@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "scope": "Expected algorithm-use findings for QRYPTON's local source scanner; these are fixture expectations, not QRYPTON-native risk-tier labels.",
+  "constraint_scope": "must_never_be_critical applies to quantum-algorithm effect alone; independent business/policy drivers may still raise overall risk. must_be_capped_at_low is the expected path-aware risk policy for test/vector paths and is not assigned by the source detector.",
+  "scanner_profile": {
+    "languages": ["Python", "C", "C++"],
+    "python_extensions": [".py"],
+    "c_extensions": [".c", ".h"],
+    "cpp_extensions": [".cc", ".cpp", ".cxx", ".hh", ".hpp"],
+    "python_detection": "AST calls whose import-resolved name contains an algorithm-catalog token; comments and strings do not trigger algorithm calls.",
+    "supported_python_api_examples": [
+      "hashlib.md5(...), hashlib.sha1(...), hashlib.sha256(...)",
+      "rsa.generate_private_key(..., key_size=2048)",
+      "ec.generate_private_key(P256_CURVE()) with P256_CURVE = ec.SECP256R1",
+      "cryptography.hazmat.primitives.ciphers.algorithms.AES(...)",
+      "pqcrypto.kem.ml_kem_768.keygen()"
+    ],
+    "detector_limits": [
+      "RSA is reported as generic rsa; a key_size integer keyword is separately observed, but TLS/key-exchange/encryption role is not inferred from function names or comments.",
+      "ECDSA is not an algorithm-catalog entry. The firmware fixture aliases SECP256R1, ECDSA, and SHA256 constructors so only ec.generate_private_key(P256_CURVE()) is reported as generic ec; the sign/ECDSA operation is not detected.",
+      "AES calls are reported as generic aes. Positional key byte width is not parsed as key_size_bits, so AES-128 versus AES-256 cannot be distinguished by this scanner.",
+      "Function names, path classes, and comments do not alter scanner primitive classification. Test/vector weighting must come from a separate path-aware risk policy.",
+      "Python import statements under cryptography/hashlib can additionally emit library-import evidence; this file lists algorithm-use findings only."
+    ],
+    "c_cpp_api_prefixes": {
+      "EVP_aes": "aes",
+      "AES_": "aes",
+      "EVP_sha": "sha256",
+      "SHA": "sha256",
+      "MD5": "md5",
+      "RSA_": "rsa",
+      "EVP_PKEY_RSA": "rsa",
+      "EVP_PKEY_EC": "ec",
+      "crypto_box": "x25519",
+      "crypto_sign": "ed25519",
+      "BCrypt": "aes",
+      "CCCrypt": "aes",
+      "mbedtls_aes": "aes",
+      "mbedtls_sha": "sha256",
+      "wolfSSL": "tls"
+    }
+  },
+  "ui_business_contexts": {
+    "payment_gateway": {
+      "intended_context": {"environment": "production", "internet_facing": true, "data_sensitivity": "high", "data_lifetime_years": 20},
+      "dashboard_mapping": {"environment": "production", "business_criticality": "high (closest available proxy; not the same as sensitivity)", "data_lifetime_X_years": 20, "migration_time_Y_years": "UI default 4; not specified by request", "crqc_horizon_Z_years": "UI default 8; verify/configure for the test"},
+      "ui_gap": "The inspected dashboard form has no internet-facing or data-sensitivity field; its source-repository context is scan-wide, not per path."
+    },
+    "firmware": {
+      "intended_context": {"trust_lifetime_years": 15},
+      "dashboard_mapping": {"environment": "not specified", "business_criticality": "not specified", "data_lifetime_X_years": "15 as a proxy only for trust lifetime", "migration_time_Y_years": "UI default 4; not specified by request", "crqc_horizon_Z_years": "UI default 8; verify/configure for the test"},
+      "ui_gap": "The UI labels X as data lifetime and provides no firmware-trust-lifetime field; the 15-year mapping is an explicit proxy, not an equivalent metric."
+    },
+    "internal_logging": {
+      "intended_context": {"sensitivity": "low", "data_lifetime_years": 1},
+      "dashboard_mapping": {"environment": "not specified", "business_criticality": "low (closest available proxy; not the same as sensitivity)", "data_lifetime_X_years": 1, "migration_time_Y_years": "UI default 4; not specified by request", "crqc_horizon_Z_years": "UI default 8; verify/configure for the test"},
+      "ui_gap": "The inspected dashboard form has no sensitivity field and applies one context to the whole repository scan, not only src/internal_logging."
+    }
+  },
+  "findings": [
+    {
+      "file": "src/payment_gateway/tls.py",
+      "function": "generate_tls_rsa_2048_key_exchange",
+      "primitive": "RSA-2048",
+      "primitive_class": "SHOR_VULNERABLE",
+      "crypto_role": "key exchange (intended TLS context; role linkage is not inferred)",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": false, "must_depend_on_Z": true, "must_be_capped_at_low": false, "relative_rank": "payment_gateway > internal_logging for the same RSA primitive under the stated production/business contexts"},
+      "scanner_trigger": {"call": "rsa.generate_private_key(public_exponent=65537, key_size=2048)", "expected_observed_algorithm": "rsa", "expected_key_size_bits": 2048, "rule_id": "python.algorithm.rsa"}
+    },
+    {
+      "file": "src/firmware/sign.py",
+      "function": "sign_firmware_p256",
+      "primitive": "EC (intended ECDSA P-256)",
+      "primitive_class": "SHOR_VULNERABLE",
+      "crypto_role": "firmware-image signature",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": false, "must_depend_on_Z": true, "must_be_capped_at_low": false, "relative_rank": "should reflect the stated 15-year firmware trust lifetime when X is configured; the scanner's generic EC finding alone does not prove ECDSA"},
+      "scanner_trigger": {"call": "ec.generate_private_key(P256_CURVE())", "expected_observed_algorithm": "ec", "expected_key_size_bits": null, "rule_id": "python.algorithm.ec", "not_detected": "ec.ECDSA(...) and private_key.sign(...) are not matched as ECDSA/signature algorithms; alias calls do not resolve to the algorithm catalog"}
+    },
+    {
+      "file": "src/internal_logging/crypto.py",
+      "function": "encrypt_short_lived_internal_log_line",
+      "primitive": "RSA-2048",
+      "primitive_class": "SHOR_VULNERABLE",
+      "crypto_role": "encryption of short-lived internal log lines (role linkage is not inferred)",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": false, "must_depend_on_Z": true, "must_be_capped_at_low": false, "relative_rank": "payment_gateway > internal_logging for the same RSA primitive; 1-year low-sensitivity context must not outrank 20-year high-sensitivity internet-facing context"},
+      "scanner_trigger": {"call": "rsa.generate_private_key(public_exponent=65537, key_size=2048)", "expected_observed_algorithm": "rsa", "expected_key_size_bits": 2048, "rule_id": "python.algorithm.rsa", "not_detected": "the chained public_key().encrypt(...) role is not independently classified as RSA encryption"}
+    },
+    {
+      "file": "src/hashes.py",
+      "function": "hash_placeholder_md5",
+      "primitive": "MD5",
+      "primitive_class": "CLASSICALLY_WEAK",
+      "crypto_role": "hashing",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": false, "must_depend_on_Z": false, "must_be_capped_at_low": false, "relative_rank": "MD5 should rank no lower than SHA-1 or SHA-256 for the same use/context because it is classically disallowed"},
+      "scanner_trigger": {"call": "hashlib.md5(data)", "expected_observed_algorithm": "md5", "rule_id": "python.algorithm.md5"}
+    },
+    {
+      "file": "src/hashes.py",
+      "function": "hash_placeholder_sha1",
+      "primitive": "SHA-1",
+      "primitive_class": "CLASSICALLY_WEAK",
+      "crypto_role": "hashing",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": false, "must_depend_on_Z": false, "must_be_capped_at_low": false, "relative_rank": "SHA-1 should rank below MD5 and above SHA-256 for the same use/context"},
+      "scanner_trigger": {"call": "hashlib.sha1(data)", "expected_observed_algorithm": "sha-1", "rule_id": "python.algorithm.sha_1"}
+    },
+    {
+      "file": "src/hashes.py",
+      "function": "hash_placeholder_sha256",
+      "primitive": "SHA-256",
+      "primitive_class": "GROVER_REDUCED",
+      "crypto_role": "hashing",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": true, "must_depend_on_Z": true, "must_be_capped_at_low": false, "relative_rank": "below MD5 and SHA-1 for equivalent contexts; Grover reduction alone must not be treated like a Shor break"},
+      "scanner_trigger": {"call": "hashlib.sha256(data)", "expected_observed_algorithm": "sha-256", "rule_id": "python.algorithm.sha_256"}
+    },
+    {
+      "file": "src/aes.py",
+      "function": "use_aes_128_placeholder_key",
+      "primitive": "AES (intended 128-bit key width)",
+      "primitive_class": "GROVER_REDUCED",
+      "crypto_role": "encryption",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": true, "must_depend_on_Z": true, "must_be_capped_at_low": false, "relative_rank": "AES-128 should not rank below AES-256 if key size is separately known; this scanner observes both only as generic AES, so no key-size ordering is assertable from its evidence"},
+      "scanner_trigger": {"call": "AES(bytes(16))", "expected_observed_algorithm": "aes", "expected_key_size_bits": null, "rule_id": "python.algorithm.aes", "key_size_note": "16 placeholder bytes are visible in source but positional constructor arguments are not extracted into key_size_bits"}
+    },
+    {
+      "file": "src/aes.py",
+      "function": "use_aes_256_placeholder_key",
+      "primitive": "AES (intended 256-bit key width)",
+      "primitive_class": "GROVER_REDUCED",
+      "crypto_role": "encryption",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": true, "must_depend_on_Z": true, "must_be_capped_at_low": false, "relative_rank": "AES-256 should not rank above AES-128 if key size is separately known; this scanner observes both only as generic AES, so no key-size ordering is assertable from its evidence"},
+      "scanner_trigger": {"call": "AES(bytes(32))", "expected_observed_algorithm": "aes", "expected_key_size_bits": null, "rule_id": "python.algorithm.aes", "key_size_note": "32 placeholder bytes are visible in source but positional constructor arguments are not extracted into key_size_bits"}
+    },
+    {
+      "file": "src/pq.py",
+      "function": "generate_ml_kem_768_placeholder_keypair",
+      "primitive": "ML-KEM-768",
+      "primitive_class": "POST_QUANTUM",
+      "crypto_role": "post-quantum key encapsulation",
+      "path_class": "production",
+      "expected_behavior": {"must_never_be_critical": true, "must_depend_on_Z": false, "must_be_capped_at_low": false, "relative_rank": "must not be ranked as Shor-vulnerable legacy public-key crypto solely because it is a KEM"},
+      "scanner_trigger": {"call": "keygen()", "imported_from": "pqcrypto.kem.ml_kem_768", "expected_observed_algorithm": "ml-kem", "rule_id": "python.algorithm.ml_kem", "library_import_evidence": false}
+    },
+    {
+      "file": "tests/test_rsa.py",
+      "function": "test_rsa_2048_call_for_static_scan",
+      "primitive": "RSA-2048",
+      "primitive_class": "SHOR_VULNERABLE",
+      "crypto_role": "test-only RSA use",
+      "path_class": "test",
+      "expected_behavior": {"must_never_be_critical": true, "must_depend_on_Z": false, "must_be_capped_at_low": true, "relative_rank": "same RSA primitive in production must outrank this test-only use; cap test-path risk at low"},
+      "scanner_trigger": {"call": "rsa.generate_private_key(public_exponent=65537, key_size=2048)", "expected_observed_algorithm": "rsa", "expected_key_size_bits": 2048, "rule_id": "python.algorithm.rsa"}
+    },
+    {
+      "file": "tests/vectors/rsa_vectors.py",
+      "function": "generate_placeholder_rsa_vector_key",
+      "primitive": "RSA-2048",
+      "primitive_class": "SHOR_VULNERABLE",
+      "crypto_role": "test-vector-style RSA use",
+      "path_class": "vector",
+      "expected_behavior": {"must_never_be_critical": true, "must_depend_on_Z": false, "must_be_capped_at_low": true, "relative_rank": "same RSA primitive in production must outrank this vector-path use; cap vector-path risk at low"},
+      "scanner_trigger": {"call": "rsa.generate_private_key(public_exponent=65537, key_size=2048)", "expected_observed_algorithm": "rsa", "expected_key_size_bits": 2048, "rule_id": "python.algorithm.rsa"}
+    }
+  ]
+}
